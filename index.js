@@ -10,14 +10,18 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
-  ]
+  ],
+  allowedMentions: {
+    parse: ['users', 'roles'], // still allow normal mentions
+    repliedUser: false         // 🚫 disables reply ping globally
+  }
 });
 
 const db = new sqlite3.Database('./cards.db');
 const filteredCodesMap = new Map(); // store codes for "Copy All Codes" buttons
 const invStateMap = new Map();
 const evolveMap = new Map();
-const reminderUsers = new Map(); // userId -> channelId
+const reminderUsers = new Map(); // userId -> { channelId, enabled }
 const searchStateMap = new Map();
 
 db.serialize(() => {
@@ -62,6 +66,26 @@ function allQuery(query, params = []) {
       else resolve(rows);
     });
   });
+}
+
+function sendReminder(userId, messageText, delay) {
+  if (!reminderUsers.has(userId)) return;
+
+  const chId = reminderUsers.get(userId);
+
+  setTimeout(async () => {
+    try {
+      const channel = await client.channels.fetch(chId);
+
+      channel.send({
+        content: `<@${userId}> ${messageText}`, // ✅ ONLY place we ping
+        allowedMentions: { users: [userId] }
+      });
+
+    } catch (err) {
+      console.log("Reminder failed:", err.message);
+    }
+  }, delay);
 }
 
 // Cooldowns
@@ -478,6 +502,12 @@ if (reminderUsers.has(message.author.id)) {
   ]
 );
 
+sendReminder(
+  message.author.id,
+  "🎴 your **drop** is ready again!",
+  30 * 60 * 1000 // 30 min (or your cooldown)
+);
+
       // 🎴 SHOW CARD
       message.reply({
         embeds: [{
@@ -530,6 +560,11 @@ if (reminderUsers.has(message.author.id)) {
       message.reply("❌ DB error");
     }
   })();
+  sendReminder(
+  message.author.id,
+  "🎴 your **drop** is ready again!",
+  30 * 60 * 1000 // 30 min (or your cooldown)
+);
 }
 
 //BALANCE
@@ -1742,13 +1777,19 @@ if (content.startsWith('.reminder')) {
   }
 
   if (sub === 'on') {
-  reminderUsers.set(message.author.id, message.channel.id);
-  return message.reply("Reminders ENABLED!");
-}
+    reminderUsers.set(message.author.id, {
+      channelId: message.channel.id,
+      enabled: true
+    });
+    return message.reply("🔔 Reminders ENABLED!");
+  }
 
   if (sub === 'off') {
-    reminderUsers.delete(message.author.id);
-    return message.reply("Reminders DISABLED");
+    reminderUsers.set(message.author.id, {
+      channelId: message.channel.id,
+      enabled: false
+    });
+    return message.reply("🔕 Reminders DISABLED (silent mode)");
   }
 
   return message.reply("❌ Use: .reminder on / off");
